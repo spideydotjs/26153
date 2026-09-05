@@ -14,9 +14,9 @@ dist/
 build/
 
 # Saved models (regenerate by running run.py)
-models/*.joblib
-models/*.ubj
-models/*.json
+#models/*.joblib
+#models/*.ubj
+#models/*.json
 
 # Outputs (regenerate by running run.py)
 outputs/*.png
