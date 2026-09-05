@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+
+# Environment variables — never commit secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Saved models (regenerate by running run.py)
+models/*.joblib
+models/*.ubj
+models/*.json
+
+# Outputs (regenerate by running run.py)
+outputs/*.png
+
+# Data — too large for git, store separately
+data/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
