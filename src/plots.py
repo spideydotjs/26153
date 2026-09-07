@@ -2,11 +2,12 @@
 plots.py — feature importance bars and PR curves
 """
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.metrics import precision_recall_curve, average_precision_score
+from sklearn.metrics import average_precision_score, precision_recall_curve
 
 
 def top_features(model, feature_names: list[str], top_n: int = 15) -> list[tuple]:
@@ -17,16 +18,18 @@ def top_features(model, feature_names: list[str], top_n: int = 15) -> list[tuple
 
 def plot_feature_importance(models: dict, feature_names: list[str], out_path: str):
     """Bar chart of top-15 features for every model that has feature_importances_."""
-    tree_models = {k: v for k, v in models.items() if hasattr(v, "feature_importances_")}
+    tree_models = {
+        k: v for k, v in models.items() if hasattr(v, "feature_importances_")
+    }
     n = len(tree_models)
-    fig, axes = plt.subplots(1, n, figsize=(9 * n, 6))
+    _fig, axes = plt.subplots(1, n, figsize=(9 * n, 6))
     if n == 1:
         axes = [axes]
 
     for ax, (name, model) in zip(axes, tree_models.items()):
         fi = top_features(model, feature_names)
         names = [f for f, _ in fi]
-        vals  = [v for _, v in fi]
+        vals = [v for _, v in fi]
         ax.barh(names[::-1], vals[::-1], color="steelblue", edgecolor="white")
         ax.set_xlabel("Importance")
         ax.set_title(f"{name} — Top 15 Features")
@@ -54,7 +57,7 @@ def plot_pr_curves(models: dict, splits: dict, out_path: str):
     splits: {"train": (X, y), "val": (X, y), "test": (X, y)}
     """
     colors = ["tab:blue", "tab:green", "tab:orange", "tab:red"]
-    fig, axes = plt.subplots(1, len(splits), figsize=(6 * len(splits), 4))
+    _fig, axes = plt.subplots(1, len(splits), figsize=(6 * len(splits), 4))
 
     for ax, (split_label, (X, y)) in zip(axes, splits.items()):
         for (model_name, model), color in zip(models.items(), colors):

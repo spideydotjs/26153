@@ -12,7 +12,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-
+cic-ids2018-processed/
 # Saved models (regenerate by running run.py)
 #models/*.joblib
 #models/*.ubj

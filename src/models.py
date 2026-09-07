@@ -1,26 +1,27 @@
 """
-models.py — build and train the three classifiers
-Hyperparameters are read from environment variables (set via .env).
+models.py — Model architectures, hyperparameter retrieval, and training pipeline.
+Supports Logistic Regression, Random Forest, and XGBoost with class weight balancing.
 """
 
 import os
+
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
 
-# Read from env with sensible defaults
-SEED               = int(os.getenv("RANDOM_SEED",        42))
-RF_N_ESTIMATORS    = int(os.getenv("RF_N_ESTIMATORS",   400))
-RF_MIN_SAMPLES_LEAF= int(os.getenv("RF_MIN_SAMPLES_LEAF", 4))
-XGB_N_ESTIMATORS   = int(os.getenv("XGB_N_ESTIMATORS",  400))
-XGB_MAX_DEPTH      = int(os.getenv("XGB_MAX_DEPTH",        6))
-XGB_LR             = float(os.getenv("XGB_LEARNING_RATE", 0.05))
-XGB_SUBSAMPLE      = float(os.getenv("XGB_SUBSAMPLE",      0.8))
-XGB_COLSAMPLE      = float(os.getenv("XGB_COLSAMPLE_BYTREE", 0.8))
+# Retrieve hyperparameters from environment with production defaults
+SEED: int = int(os.getenv("RANDOM_SEED", "42"))
+RF_N_ESTIMATORS: int = int(os.getenv("RF_N_ESTIMATORS", "400"))
+RF_MIN_SAMPLES_LEAF: int = int(os.getenv("RF_MIN_SAMPLES_LEAF", "4"))
+XGB_N_ESTIMATORS: int = int(os.getenv("XGB_N_ESTIMATORS", "400"))
+XGB_MAX_DEPTH: int = int(os.getenv("XGB_MAX_DEPTH", "6"))
+XGB_LR: float = float(os.getenv("XGB_LEARNING_RATE", "0.05"))
+XGB_SUBSAMPLE: float = float(os.getenv("XGB_SUBSAMPLE", "0.8"))
+XGB_COLSAMPLE: float = float(os.getenv("XGB_COLSAMPLE_BYTREE", "0.8"))
 
 
-def build_logreg():
+def build_logreg() -> LogisticRegression:
     return LogisticRegression(
         class_weight="balanced",
         max_iter=1000,
@@ -29,7 +30,7 @@ def build_logreg():
     )
 
 
-def build_random_forest():
+def build_random_forest() -> RandomForestClassifier:
     return RandomForestClassifier(
         n_estimators=RF_N_ESTIMATORS,
         max_depth=None,
@@ -40,7 +41,7 @@ def build_random_forest():
     )
 
 
-def build_xgboost(scale_pos_weight: float):
+def build_xgboost(scale_pos_weight: float) -> XGBClassifier:
     return XGBClassifier(
         n_estimators=XGB_N_ESTIMATORS,
         max_depth=XGB_MAX_DEPTH,
@@ -55,21 +56,27 @@ def build_xgboost(scale_pos_weight: float):
     )
 
 
-def train_all(X_train, y_train):
-    """Train LR, RF, XGB and return them in a dict."""
-    neg, pos = np.bincount(y_train)
-    spw = neg / pos
-    print(f"\nTrain class ratio: {neg} neg / {pos} pos  |  scale_pos_weight = {spw:.2f}")
+def train_all(X_train: np.ndarray, y_train: np.ndarray) -> dict[str, object]:
+    """Train LogReg, RandomForest, and XGBoost classifiers with imbalance mitigation."""
+    bincounts = np.bincount(y_train)
+    neg = int(bincounts[0]) if len(bincounts) > 0 else 1
+    pos = int(bincounts[1]) if len(bincounts) > 1 else 1
+    spw = max(neg / max(pos, 1), 1.0)
+
+    print(
+        f"\nTrain class distribution: {neg:,} negative / {pos:,} positive | scale_pos_weight = {spw:.2f}"
+    )
 
     models = {
-        "LogReg":       build_logreg(),
+        "LogReg": build_logreg(),
         "RandomForest": build_random_forest(),
-        "XGBoost":      build_xgboost(spw),
+        "XGBoost": build_xgboost(spw),
     }
 
-    print("\nTraining models...")
+    print("\nTraining models:")
     for name, model in models.items():
+        print(f"  -> Fitting {name}...", end="", flush=True)
         model.fit(X_train, y_train)
-        print(f"  {name} done")
+        print(" [done]")
 
     return models

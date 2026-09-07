@@ -1,111 +1,116 @@
 """
-run.py — VectorFlow entry point
-Usage:  source .venv/bin/activate && python run.py
+run.py — Main VectorFlow Model Training and Calibration Pipeline.
+Trains LogReg, Random Forest, and XGBoost; optimizes alerting thresholds on Validation;
+and evaluates test performance under distribution shift.
 """
-
-import warnings
-warnings.filterwarnings("ignore")
 
 import os
 import sys
+import warnings
+
 from dotenv import load_dotenv
-
-load_dotenv()   # reads .env into os.environ
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-
 from sklearn.preprocessing import StandardScaler
 
+# Ensure local packages are on sys.path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
 import data as D
-import models as M
 import evaluate as E
-import plots as P
+import models as M
 import persist as Persist
+import plots as P
 
+warnings.filterwarnings("ignore")
+load_dotenv()
 
-DATA_PATH  = os.getenv("DATA_PATH",  "data/cic_ids2018_core_training_dataset.csv")
+DATA_PATH = os.getenv("DATA_PATH", "data/cic_ids2018_complete_dataset.csv")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "outputs")
-MODEL_DIR  = os.getenv("MODEL_DIR",  "models")
+MODEL_DIR = os.getenv("MODEL_DIR", "models")
 
 OUT_FI = os.path.join(OUTPUT_DIR, "feature_importance.png")
 OUT_PR = os.path.join(OUTPUT_DIR, "pr_curves.png")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(MODEL_DIR, exist_ok=True)
 
 
-# ── Load ──────────────────────────────────────────────────────────────────────
-df = D.load(DATA_PATH)
-print(f"Loaded {len(df):,} rows, {df.shape[1]} columns")
-print(f"Date range: {df['window_start'].min()} → {df['window_start'].max()}")
+def main():
+    print("=" * 65)
+    print(" VectorFlow — Network Attack Forecasting Training Pipeline")
+    print("=" * 65)
 
-# ── Audit ─────────────────────────────────────────────────────────────────────
-D.audit(df)
+    # 1. Load dataset
+    df = D.load(DATA_PATH)
+    print(f"Loaded {len(df):,} windows, {df.shape[1]} columns")
+    print(f"Time range: {df['window_start'].min()} -> {df['window_start'].max()}")
 
-# ── Split ─────────────────────────────────────────────────────────────────────
-train_df, val_df, test_df = D.split(df)
+    # 2. Session Audit
+    D.audit(df)
 
-feat_cols = D.feature_cols(df)
-X_train, y_train = D.xy(train_df, feat_cols)
-X_val,   y_val   = D.xy(val_df,   feat_cols)
-X_test,  y_test  = D.xy(test_df,  feat_cols)
+    # 3. Chronological Train/Val/Test Split
+    train_df, val_df, test_df = D.split(df)
+    feat_cols = D.feature_cols(df)
 
-print(f"\nFeature matrix — train: {X_train.shape}, val: {X_val.shape}, test: {X_test.shape}")
+    X_train, y_train = D.xy(train_df, feat_cols)
+    X_val, y_val = D.xy(val_df, feat_cols)
+    X_test, y_test = D.xy(test_df, feat_cols)
 
-# ── Scale (fit on train only) ─────────────────────────────────────────────────
-scaler = StandardScaler()
-X_train_s = scaler.fit_transform(X_train)
-X_val_s   = scaler.transform(X_val)
-X_test_s  = scaler.transform(X_test)
+    print(
+        f"\nFeature matrix shapes: train={X_train.shape}, val={X_val.shape}, test={X_test.shape}"
+    )
 
-# ── Train ─────────────────────────────────────────────────────────────────────
-trained_models = M.train_all(X_train_s, y_train)
+    # 4. Standard Scaling (Fit on Train only)
+    scaler = StandardScaler()
+    X_train_s = scaler.fit_transform(X_train)
+    X_val_s = scaler.transform(X_val)
+    X_test_s = scaler.transform(X_test)
 
-# ── Save models & scaler ──────────────────────────────────────────────────────
-Persist.save(trained_models, scaler, MODEL_DIR)
+    # 5. Train all 3 models
+    trained_models = M.train_all(X_train_s, y_train)
 
-# ── Evaluate ──────────────────────────────────────────────────────────────────
-splits = {
-    "train": (X_train_s, y_train),
-    "val":   (X_val_s,   y_val),
-    "test":  (X_test_s,  y_test),
-}
+    # 6. Optimize decision thresholds on Validation set (constraint: Recall >= 0.50)
+    print("\n" + "=" * 65)
+    print(" Threshold Calibration on Validation Set (target: Recall >= 50%)")
+    print("=" * 65)
+    optimal_thresholds = {}
+    for name, model in trained_models.items():
+        val_proba = model.predict_proba(X_val_s)[:, 1]
+        t, f1, p, r = E.find_best_threshold(y_val, val_proba, min_recall=0.50)
+        optimal_thresholds[name] = t
+        print(
+            f"  [{name:<12}] Optimal threshold: {t:.4f} -> Val F1: {f1:.4f} | Prec: {p:.4f} | Recall: {r:.4f}"
+        )
 
-results = E.evaluate_all(trained_models, splits)
-E.print_comparison(results)
+    # 7. Persist models, scaler, and optimal thresholds
+    print("\n" + "=" * 65)
+    print(" Persisting Model Artifacts")
+    print("=" * 65)
+    Persist.save(trained_models, scaler, MODEL_DIR, optimal_thresholds)
 
-# ── Feature importances ───────────────────────────────────────────────────────
-P.print_feature_importance(trained_models, feat_cols)
+    # 8. Multi-split Evaluation (with default 0.50 vs calibrated threshold)
+    splits = {
+        "train": (X_train_s, y_train),
+        "val": (X_val_s, y_val),
+        "test": (X_test_s, y_test),
+    }
 
-# ── Plots ─────────────────────────────────────────────────────────────────────
-P.plot_feature_importance(trained_models, feat_cols, OUT_FI)
-P.plot_pr_curves(trained_models, splits, OUT_PR)
+    print("\n--- Performance with Default 0.50 Threshold ---")
+    res_default = E.evaluate_all(trained_models, splits, thresholds=None)
+    E.print_comparison(res_default)
 
-# ── Verdict ───────────────────────────────────────────────────────────────────
-print("""
-===== Verdict =====
+    print("\n--- Performance with Calibrated Decision Thresholds ---")
+    res_calibrated = E.evaluate_all(
+        trained_models, splits, thresholds=optimal_thresholds
+    )
+    E.print_comparison(res_calibrated)
 
-Logistic Regression:
-  Lowest capacity, least overfit. Train PR-AUC ~0.24; consistent (if weak)
-  across splits. Useful as a calibrated baseline, not a production detector.
+    # 9. Top-15 Feature Importance & Plots
+    P.print_feature_importance(trained_models, feat_cols)
+    P.plot_feature_importance(trained_models, feat_cols, OUT_FI)
+    P.plot_pr_curves(trained_models, splits, OUT_PR)
 
-Random Forest:
-  Near-perfect train memorisation (PR-AUC ~1.00). Val ROC-AUC ~0.73 indicates
-  real ranking signal exists, but decision boundary is tuned to training-day
-  attack campaigns that look different on val/test days. F1=0 at default 0.5
-  threshold — needs threshold tuning on val to become useful.
+    print("\nTraining and evaluation pipeline completed successfully!")
 
-XGBoost:
-  Same story as RF. Val ROC-AUC ~0.74 is marginally better, but test ROC-AUC
-  drops to ~0.54 — slightly more overfit than RF to the training distribution
-  despite subsample/colsample regularisation.
 
-All three models show F1=0 on val and test at threshold=0.5. This is temporal
-distribution shift, not a code issue: train days have 19-21% positives from
-active campaigns; val/test days have ~1% of a different character.
-
-Next steps:
-  1. Tune decision threshold on val (ROC-AUC of 0.73-0.74 means signal exists).
-  2. Evaluate at recall >= 0.5 on val and report the corresponding precision.
-  3. Consider rotating attack-heavy days into val to get an honest estimate of
-     generalisation across attack types, not just across calendar dates.
-""")
+if __name__ == "__main__":
+    main()

@@ -1,125 +1,211 @@
 """
-inference.py — load saved models and run predictions on new traffic windows
+inference.py — Load saved models, scaler, and calibrated thresholds to run forecasts.
+Accepts raw feature dictionaries or pandas DataFrames and returns probabilities + alerts.
 """
 
+import json
 import os
-import sys
+
 import joblib
 import numpy as np
 import pandas as pd
 from xgboost import XGBClassifier
 
-# The 75 feature columns in the exact order the models were trained on
-FEATURE_COLS = [
-    "Tot Fwd Pkts_sum", "Tot Bwd Pkts_sum", "TotLen Fwd Pkts_sum",
-    "TotLen Bwd Pkts_sum", "Flow Duration_mean", "Flow Duration_std",
-    "Flow IAT Mean_mean", "Dst Port_nunique", "SYN Flag Cnt_sum",
-    "ACK Flag Cnt_sum", "RST Flag Cnt_sum", "FIN Flag Cnt_sum",
-    "PSH Flag Cnt_sum", "flow_count", "bwd_fwd_pkt_ratio",
-    "Tot Fwd Pkts_sum_lag1", "Tot Fwd Pkts_sum_lag2", "Tot Fwd Pkts_sum_lag3",
-    "Tot Bwd Pkts_sum_lag1", "Tot Bwd Pkts_sum_lag2", "Tot Bwd Pkts_sum_lag3",
-    "TotLen Fwd Pkts_sum_lag1", "TotLen Fwd Pkts_sum_lag2", "TotLen Fwd Pkts_sum_lag3",
-    "TotLen Bwd Pkts_sum_lag1", "TotLen Bwd Pkts_sum_lag2", "TotLen Bwd Pkts_sum_lag3",
-    "Flow Duration_mean_lag1", "Flow Duration_mean_lag2", "Flow Duration_mean_lag3",
-    "Flow Duration_std_lag1", "Flow Duration_std_lag2", "Flow Duration_std_lag3",
-    "Flow IAT Mean_mean_lag1", "Flow IAT Mean_mean_lag2", "Flow IAT Mean_mean_lag3",
-    "Dst Port_nunique_lag1", "Dst Port_nunique_lag2", "Dst Port_nunique_lag3",
-    "SYN Flag Cnt_sum_lag1", "SYN Flag Cnt_sum_lag2", "SYN Flag Cnt_sum_lag3",
-    "ACK Flag Cnt_sum_lag1", "ACK Flag Cnt_sum_lag2", "ACK Flag Cnt_sum_lag3",
-    "RST Flag Cnt_sum_lag1", "RST Flag Cnt_sum_lag2", "RST Flag Cnt_sum_lag3",
-    "FIN Flag Cnt_sum_lag1", "FIN Flag Cnt_sum_lag2", "FIN Flag Cnt_sum_lag3",
-    "PSH Flag Cnt_sum_lag1", "PSH Flag Cnt_sum_lag2", "PSH Flag Cnt_sum_lag3",
-    "flow_count_lag1", "flow_count_lag2", "flow_count_lag3",
-    "bwd_fwd_pkt_ratio_lag1", "bwd_fwd_pkt_ratio_lag2", "bwd_fwd_pkt_ratio_lag3",
-    "Tot Fwd Pkts_sum_delta1", "Tot Bwd Pkts_sum_delta1",
-    "TotLen Fwd Pkts_sum_delta1", "TotLen Bwd Pkts_sum_delta1",
-    "Flow Duration_mean_delta1", "Flow Duration_std_delta1",
-    "Flow IAT Mean_mean_delta1", "Dst Port_nunique_delta1",
-    "SYN Flag Cnt_sum_delta1", "ACK Flag Cnt_sum_delta1",
-    "RST Flag Cnt_sum_delta1", "FIN Flag Cnt_sum_delta1",
-    "PSH Flag Cnt_sum_delta1", "flow_count_delta1", "bwd_fwd_pkt_ratio_delta1",
+FEATURE_COLS: list[str] = [
+    "Tot Fwd Pkts_sum",
+    "Tot Bwd Pkts_sum",
+    "TotLen Fwd Pkts_sum",
+    "TotLen Bwd Pkts_sum",
+    "Flow Duration_mean",
+    "Flow Duration_std",
+    "Flow IAT Mean_mean",
+    "Dst Port_nunique",
+    "SYN Flag Cnt_sum",
+    "ACK Flag Cnt_sum",
+    "RST Flag Cnt_sum",
+    "FIN Flag Cnt_sum",
+    "PSH Flag Cnt_sum",
+    "flow_count",
+    "bwd_fwd_pkt_ratio",
+    "Tot Fwd Pkts_sum_lag1",
+    "Tot Fwd Pkts_sum_lag2",
+    "Tot Fwd Pkts_sum_lag3",
+    "Tot Bwd Pkts_sum_lag1",
+    "Tot Bwd Pkts_sum_lag2",
+    "Tot Bwd Pkts_sum_lag3",
+    "TotLen Fwd Pkts_sum_lag1",
+    "TotLen Fwd Pkts_sum_lag2",
+    "TotLen Fwd Pkts_sum_lag3",
+    "TotLen Bwd Pkts_sum_lag1",
+    "TotLen Bwd Pkts_sum_lag2",
+    "TotLen Bwd Pkts_sum_lag3",
+    "Flow Duration_mean_lag1",
+    "Flow Duration_mean_lag2",
+    "Flow Duration_mean_lag3",
+    "Flow Duration_std_lag1",
+    "Flow Duration_std_lag2",
+    "Flow Duration_std_lag3",
+    "Flow IAT Mean_mean_lag1",
+    "Flow IAT Mean_mean_lag2",
+    "Flow IAT Mean_mean_lag3",
+    "Dst Port_nunique_lag1",
+    "Dst Port_nunique_lag2",
+    "Dst Port_nunique_lag3",
+    "SYN Flag Cnt_sum_lag1",
+    "SYN Flag Cnt_sum_lag2",
+    "SYN Flag Cnt_sum_lag3",
+    "ACK Flag Cnt_sum_lag1",
+    "ACK Flag Cnt_sum_lag2",
+    "ACK Flag Cnt_sum_lag3",
+    "RST Flag Cnt_sum_lag1",
+    "RST Flag Cnt_sum_lag2",
+    "RST Flag Cnt_sum_lag3",
+    "FIN Flag Cnt_sum_lag1",
+    "FIN Flag Cnt_sum_lag2",
+    "FIN Flag Cnt_sum_lag3",
+    "PSH Flag Cnt_sum_lag1",
+    "PSH Flag Cnt_sum_lag2",
+    "PSH Flag Cnt_sum_lag3",
+    "flow_count_lag1",
+    "flow_count_lag2",
+    "flow_count_lag3",
+    "bwd_fwd_pkt_ratio_lag1",
+    "bwd_fwd_pkt_ratio_lag2",
+    "bwd_fwd_pkt_ratio_lag3",
+    "Tot Fwd Pkts_sum_delta1",
+    "Tot Bwd Pkts_sum_delta1",
+    "TotLen Fwd Pkts_sum_delta1",
+    "TotLen Bwd Pkts_sum_delta1",
+    "Flow Duration_mean_delta1",
+    "Flow Duration_std_delta1",
+    "Flow IAT Mean_mean_delta1",
+    "Dst Port_nunique_delta1",
+    "SYN Flag Cnt_sum_delta1",
+    "ACK Flag Cnt_sum_delta1",
+    "RST Flag Cnt_sum_delta1",
+    "FIN Flag Cnt_sum_delta1",
+    "PSH Flag Cnt_sum_delta1",
+    "flow_count_delta1",
+    "bwd_fwd_pkt_ratio_delta1",
 ]
 
 MODEL_DIR = os.getenv("MODEL_DIR", "models")
 
-# Load once at import time — fast for repeated inference calls
-_scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.joblib"))
-_logreg = joblib.load(os.path.join(MODEL_DIR, "logreg.joblib"))
-_rf     = joblib.load(os.path.join(MODEL_DIR, "randomforest.joblib"))
-_xgb    = XGBClassifier()
-_xgb.load_model(os.path.join(MODEL_DIR, "xgboost.ubj"))
 
-THRESHOLD = 0.5
+def _load_artifacts():
+    scaler_path = os.path.join(MODEL_DIR, "scaler.joblib")
+    if not os.path.exists(scaler_path):
+        raise FileNotFoundError(
+            f"Artifacts not found in '{MODEL_DIR}'. Run `python run.py` first to train and save models."
+        )
+
+    scaler = joblib.load(scaler_path)
+    logreg = joblib.load(os.path.join(MODEL_DIR, "logreg.joblib"))
+    rf = joblib.load(os.path.join(MODEL_DIR, "randomforest.joblib"))
+
+    xgb = XGBClassifier()
+    xgb.load_model(os.path.join(MODEL_DIR, "xgboost.ubj"))
+
+    thresh_path = os.path.join(MODEL_DIR, "thresholds.json")
+    if os.path.exists(thresh_path):
+        with open(thresh_path, "r") as f:
+            thresholds = json.load(f)
+    else:
+        thresholds = {"LogReg": 0.5, "RandomForest": 0.5, "XGBoost": 0.5}
+
+    return scaler, logreg, rf, xgb, thresholds
 
 
-def predict(features):
+# Lazy-load artifacts so importing inference is fast
+_artifacts = None
+
+
+def get_artifacts():
+    global _artifacts
+    if _artifacts is None:
+        _artifacts = _load_artifacts()
+    return _artifacts
+
+
+def predict(
+    features: dict[str, float] | pd.DataFrame,
+    use_calibrated_threshold: bool = True,
+    custom_threshold: float | None = None,
+) -> pd.DataFrame:
     """
-    Run all three models on one or more traffic windows.
+    Execute attack prediction using all 3 trained models.
 
-    features: dict with 75 keys, or a DataFrame with 75 columns.
-              If a dict, it is treated as a single row.
+    Parameters:
+    - features: Dict with all 75 features or pandas DataFrame with the 75 columns.
+    - use_calibrated_threshold: If True, uses optimal thresholds from validation set.
+    - custom_threshold: If supplied, overrides thresholds for all models.
 
-    Returns a DataFrame with columns:
-        model, probability, attack_predicted
-    One row per model. If multiple rows are passed in, returns predictions
-    for each row stacked — so check the 'row' column to tell them apart.
+    Returns:
+    DataFrame with columns: ['row', 'model', 'probability', 'threshold', 'attack_predicted']
     """
-    # normalise input to a DataFrame
+    scaler, logreg, rf, xgb, thresholds = get_artifacts()
+
     if isinstance(features, dict):
         df = pd.DataFrame([features])
     elif isinstance(features, pd.DataFrame):
         df = features.copy()
     else:
-        raise TypeError("features must be a dict or a pandas DataFrame")
+        raise TypeError("Input 'features' must be a dict or a pandas DataFrame")
 
-    # validate columns
-    missing = [c for c in FEATURE_COLS if c not in df.columns]
+    missing = [col for col in FEATURE_COLS if col not in df.columns]
     if missing:
         raise ValueError(
-            f"Input is missing {len(missing)} required feature(s):\n  " +
-            "\n  ".join(missing)
+            f"Input is missing {len(missing)} required feature(s):\n  "
+            + "\n  ".join(missing[:10])
+            + ("..." if len(missing) > 10 else "")
         )
 
+    # Clean numeric array and apply scaler
     X = df[FEATURE_COLS].values.astype(float)
-    X_scaled = _scaler.transform(X)
+    X = np.nan_to_num(X, nan=0.0)
+    X_scaled = scaler.transform(X)
 
+    model_tuples = [("LogReg", logreg), ("RandomForest", rf), ("XGBoost", xgb)]
     results = []
-    for name, model in [("LogReg", _logreg), ("RandomForest", _rf), ("XGBoost", _xgb)]:
+
+    for name, model in model_tuples:
         proba = model.predict_proba(X_scaled)[:, 1]
-        pred  = (proba >= THRESHOLD).astype(int)
+
+        if custom_threshold is not None:
+            thresh = custom_threshold
+        elif use_calibrated_threshold:
+            thresh = thresholds.get(name, 0.5)
+        else:
+            thresh = 0.5
+
+        pred = (proba >= thresh).astype(int)
+
         for i, (p, a) in enumerate(zip(proba, pred)):
-            results.append({
-                "row":              i,
-                "model":            name,
-                "probability":      round(float(p), 4),
-                "attack_predicted": bool(a),
-            })
+            results.append(
+                {
+                    "row": i,
+                    "model": name,
+                    "probability": round(float(p), 4),
+                    "threshold": round(float(thresh), 4),
+                    "attack_predicted": bool(a == 1),
+                }
+            )
 
     return pd.DataFrame(results)
 
 
 if __name__ == "__main__":
-    # sanity check: grab 5 rows from the test period and run inference on them
-    DATA_PATH = os.getenv("DATA_PATH", "data/cic_ids2018_core_training_dataset.csv")
-
-    raw = pd.read_csv(DATA_PATH)
-    raw["window_start"] = pd.to_datetime(raw["window_start"])
-
-    # pull 5 rows from 2018-03-01 onward
-    test_rows = (
-        raw[raw["window_start"] >= "2018-03-01"]
-        .head(5)
-        .reset_index(drop=True)
-    )
-
-    print(f"Running inference on {len(test_rows)} rows from the test period\n")
-
-    preds = predict(test_rows)
-
-    for i in range(len(test_rows)):
-        ts     = test_rows.loc[i, "window_start"]
-        actual = int(test_rows.loc[i, "Future_Attack_Target"])
-        print(f"Row {i}  |  window_start={ts}  |  actual label={actual}")
-        row_preds = preds[preds["row"] == i][["model", "probability", "attack_predicted"]]
-        print(row_preds.to_string(index=False))
-        print()
+    DATA_PATH = os.getenv("DATA_PATH", "data/cic_ids2018_complete_dataset.csv")
+    if os.path.exists(DATA_PATH):
+        raw = pd.read_csv(DATA_PATH)
+        sample = raw[raw["window_start"] >= "2018-03-01"].head(5).reset_index(drop=True)
+        print(f"Running inference sanity check on {len(sample)} test windows:")
+        preds = predict(sample, use_calibrated_threshold=True)
+        for i in range(len(sample)):
+            ts = sample.loc[i, "window_start"]
+            target = int(sample.loc[i, "Future_Attack_Target"])
+            print(f"\n[Window {i}] Time: {ts} | Actual Target: {target}")
+            sub = preds[preds["row"] == i][
+                ["model", "probability", "threshold", "attack_predicted"]
+            ]
+            print(sub.to_string(index=False))
