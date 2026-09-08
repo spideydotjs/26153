@@ -1,16 +1,9 @@
-"""
-models.py — Model architectures, hyperparameter retrieval, and training pipeline.
-Supports Logistic Regression, Random Forest, and XGBoost with class weight balancing.
-"""
-
 import os
-
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
 
-# Retrieve hyperparameters from environment with production defaults
 SEED: int = int(os.getenv("RANDOM_SEED", "42"))
 RF_N_ESTIMATORS: int = int(os.getenv("RF_N_ESTIMATORS", "400"))
 RF_MIN_SAMPLES_LEAF: int = int(os.getenv("RF_MIN_SAMPLES_LEAF", "4"))
@@ -57,7 +50,6 @@ def build_xgboost(scale_pos_weight: float) -> XGBClassifier:
 
 
 def train_all(X_train: np.ndarray, y_train: np.ndarray) -> dict[str, object]:
-    """Train LogReg, RandomForest, and XGBoost classifiers with imbalance mitigation."""
     bincounts = np.bincount(y_train)
     neg = int(bincounts[0]) if len(bincounts) > 0 else 1
     pos = int(bincounts[1]) if len(bincounts) > 1 else 1

@@ -1,7 +1,3 @@
-"""
-persist.py — Serialization and deserialization of models, scalers, and optimal thresholds.
-"""
-
 import json
 import os
 
@@ -15,21 +11,12 @@ def save(
     model_dir: str = "models",
     thresholds: dict[str, float] | None = None,
 ):
-    """
-    Persist all models, scaler, and calibrated decision thresholds to model_dir.
-    - LogisticRegression, RandomForest -> joblib
-    - XGBoost -> native binary .ubj format
-    - StandardScaler -> joblib
-    - Thresholds -> thresholds.json
-    """
     os.makedirs(model_dir, exist_ok=True)
 
-    # Save fitted scaler
     scaler_path = os.path.join(model_dir, "scaler.joblib")
     joblib.dump(scaler, scaler_path)
     print(f"Saved scaler       -> {scaler_path}")
 
-    # Save models
     for name, model in models.items():
         if name == "XGBoost":
             path = os.path.join(model_dir, "xgboost.ubj")
@@ -40,7 +27,6 @@ def save(
             joblib.dump(model, path)
         print(f"Saved {name:<12} -> {path}")
 
-    # Save optimal decision thresholds
     thresh_path = os.path.join(model_dir, "thresholds.json")
     saved_thresh = (
         thresholds
@@ -53,10 +39,6 @@ def save(
 
 
 def load(model_dir: str = "models") -> tuple[object, dict, dict]:
-    """
-    Load scaler, all models, and decision thresholds from model_dir.
-    Returns: (scaler, models_dict, thresholds_dict)
-    """
     scaler = joblib.load(os.path.join(model_dir, "scaler.joblib"))
 
     xgb = XGBClassifier()

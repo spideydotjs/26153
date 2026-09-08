@@ -1,7 +1,3 @@
-"""
-plots.py — feature importance bars and PR curves
-"""
-
 import matplotlib
 import numpy as np
 
@@ -17,7 +13,6 @@ def top_features(model, feature_names: list[str], top_n: int = 15) -> list[tuple
 
 
 def plot_feature_importance(models: dict, feature_names: list[str], out_path: str):
-    """Bar chart of top-15 features for every model that has feature_importances_."""
     tree_models = {
         k: v for k, v in models.items() if hasattr(v, "feature_importances_")
     }
@@ -52,10 +47,6 @@ def print_feature_importance(models: dict, feature_names: list[str]):
 
 
 def plot_pr_curves(models: dict, splits: dict, out_path: str):
-    """
-    models: {"ModelName": fitted_model, ...}
-    splits: {"train": (X, y), "val": (X, y), "test": (X, y)}
-    """
     colors = ["tab:blue", "tab:green", "tab:orange", "tab:red"]
     _fig, axes = plt.subplots(1, len(splits), figsize=(6 * len(splits), 4))
 

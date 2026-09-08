@@ -1,7 +1,3 @@
-"""
-evaluate.py — Metrics, threshold optimization, comparison tables, and confusion matrices.
-"""
-
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
@@ -18,11 +14,6 @@ from sklearn.metrics import (
 def find_best_threshold(
     y_true: np.ndarray, y_proba: np.ndarray, min_recall: float = 0.5
 ) -> tuple[float, float, float, float]:
-    """
-    Find optimal decision threshold maximizing F1 on minority class
-    while ensuring a minimum recall constraint (e.g. >= 0.50).
-    Returns: (best_threshold, best_f1, precision, recall)
-    """
     precisions, recalls, thresholds = precision_recall_curve(y_true, y_proba)
     best_thresh = 0.5
     best_f1 = 0.0
@@ -38,7 +29,6 @@ def find_best_threshold(
                 best_p = p
                 best_r = r
 
-    # Fallback if constraint wasn't met
     if best_f1 == 0.0 and len(thresholds) > 0:
         f1_scores = (2 * precisions[:-1] * recalls[:-1]) / (
             precisions[:-1] + recalls[:-1] + 1e-12
@@ -65,7 +55,6 @@ def evaluate_one(
     split_label: str,
     threshold: float = 0.5,
 ) -> dict:
-    """Evaluate one model on a given dataset split at a specific decision threshold."""
     proba = model.predict_proba(X)[:, 1]
     pred = (proba >= threshold).astype(int)
     cm = confusion_matrix(y, pred, labels=[0, 1])
@@ -89,10 +78,6 @@ def evaluate_one(
 def evaluate_all(
     models: dict, splits: dict, thresholds: dict | None = None
 ) -> pd.DataFrame:
-    """
-    Evaluate multiple models across multiple splits.
-    thresholds: Optional dict mapping model_name -> float threshold.
-    """
     rows = []
     for model_name, model in models.items():
         thresh = thresholds.get(model_name, 0.5) if thresholds else 0.5
@@ -104,7 +89,6 @@ def evaluate_all(
 
 
 def print_comparison(results: pd.DataFrame):
-    """Print structured pivot comparison and confusion matrix tables."""
     print("\n\n===== Model Performance Comparison =====\n")
     metric_cols = ["PR-AUC", "ROC-AUC", "Precision", "Recall", "F1", "threshold"]
     pivot = results.pivot_table(
@@ -120,9 +104,3 @@ def print_comparison(results: pd.DataFrame):
     print("\n\n===== Confusion Matrices =====\n")
     cols = ["model", "split", "threshold", "TP", "FP", "FN", "TN"]
     print(results[cols].to_string(index=False))
-
-    print(
-        "\nNote on Evaluation: In imbalanced time-series forecasting, standard 0.5 threshold"
-        "\noften yields zero true positives under distribution shift."
-        "\nCalibrated thresholds optimized on Validation restore practical operational alerting."
-    )

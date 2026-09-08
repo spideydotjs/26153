@@ -1,11 +1,5 @@
-"""
-inference.py — Load saved models, scaler, and calibrated thresholds to run forecasts.
-Accepts raw feature dictionaries or pandas DataFrames and returns probabilities + alerts.
-"""
-
 import json
 import os
-
 import joblib
 import numpy as np
 import pandas as pd
@@ -95,9 +89,7 @@ MODEL_DIR = os.getenv("MODEL_DIR", "models")
 def _load_artifacts():
     scaler_path = os.path.join(MODEL_DIR, "scaler.joblib")
     if not os.path.exists(scaler_path):
-        raise FileNotFoundError(
-            f"Artifacts not found in '{MODEL_DIR}'. Run `python run.py` first to train and save models."
-        )
+        raise FileNotFoundError(f"Artifacts not found in '{MODEL_DIR}'.")
 
     scaler = joblib.load(scaler_path)
     logreg = joblib.load(os.path.join(MODEL_DIR, "logreg.joblib"))
@@ -113,10 +105,25 @@ def _load_artifacts():
     else:
         thresholds = {"LogReg": 0.5, "RandomForest": 0.5, "XGBoost": 0.5}
 
-    return scaler, logreg, rf, xgb, thresholds
+    lstm_obj = None
+    lstm_scaler = None
+    lstm_thresh = 0.5
+    lstm_pt = os.path.join(MODEL_DIR, "lstm.pt")
+    if os.path.exists(lstm_pt):
+        try:
+            import lstm_model as LM
+            lstm_net, lstm_sc, l_th, _ = LM.load_lstm(MODEL_DIR)
+            lstm_obj = lstm_net
+            lstm_scaler = lstm_sc
+            lstm_thresh = l_th
+            thresholds["LSTM"] = l_th
+            thresholds["Ensemble (XGB+LSTM)"] = 0.2019
+        except Exception:
+            pass
+
+    return scaler, logreg, rf, xgb, thresholds, lstm_obj, lstm_scaler, lstm_thresh
 
 
-# Lazy-load artifacts so importing inference is fast
 _artifacts = None
 
 
@@ -131,19 +138,9 @@ def predict(
     features: dict[str, float] | pd.DataFrame,
     use_calibrated_threshold: bool = True,
     custom_threshold: float | None = None,
+    include_lstm: bool = False,
 ) -> pd.DataFrame:
-    """
-    Execute attack prediction using all 3 trained models.
-
-    Parameters:
-    - features: Dict with all 75 features or pandas DataFrame with the 75 columns.
-    - use_calibrated_threshold: If True, uses optimal thresholds from validation set.
-    - custom_threshold: If supplied, overrides thresholds for all models.
-
-    Returns:
-    DataFrame with columns: ['row', 'model', 'probability', 'threshold', 'attack_predicted']
-    """
-    scaler, logreg, rf, xgb, thresholds = get_artifacts()
+    scaler, logreg, rf, xgb, thresholds, lstm_net, lstm_scaler, lstm_thresh = get_artifacts()
 
     if isinstance(features, dict):
         df = pd.DataFrame([features])
@@ -154,22 +151,19 @@ def predict(
 
     missing = [col for col in FEATURE_COLS if col not in df.columns]
     if missing:
-        raise ValueError(
-            f"Input is missing {len(missing)} required feature(s):\n  "
-            + "\n  ".join(missing[:10])
-            + ("..." if len(missing) > 10 else "")
-        )
+        raise ValueError(f"Input is missing {len(missing)} required feature(s): {missing[:5]}")
 
-    # Clean numeric array and apply scaler
     X = df[FEATURE_COLS].values.astype(float)
     X = np.nan_to_num(X, nan=0.0)
     X_scaled = scaler.transform(X)
 
     model_tuples = [("LogReg", logreg), ("RandomForest", rf), ("XGBoost", xgb)]
     results = []
+    probas_by_model = {}
 
     for name, model in model_tuples:
         proba = model.predict_proba(X_scaled)[:, 1]
+        probas_by_model[name] = proba
 
         if custom_threshold is not None:
             thresh = custom_threshold
@@ -191,6 +185,49 @@ def predict(
                 }
             )
 
+    if include_lstm and lstm_net is not None and lstm_scaler is not None:
+        try:
+            import lstm_model as LM
+            base_feats = LM.BASE_FEATURES
+            base_data = df[base_feats].values.astype(np.float32)
+            n_samples = len(df)
+            seq_len = 10
+            sequences = np.repeat(base_data[:, np.newaxis, :], seq_len, axis=1)
+            F = len(base_feats)
+            seq_scaled = lstm_scaler.transform(sequences.reshape(-1, F)).reshape(n_samples, seq_len, F).astype(np.float32)
+            lstm_p = LM.predict_proba(lstm_net, seq_scaled)
+            probas_by_model["LSTM"] = lstm_p
+
+            l_thresh = custom_threshold if custom_threshold is not None else (thresholds.get("LSTM", lstm_thresh) if use_calibrated_threshold else 0.5)
+            l_pred = (lstm_p >= l_thresh).astype(int)
+
+            for i, (p, a) in enumerate(zip(lstm_p, l_pred)):
+                results.append(
+                    {
+                        "row": i,
+                        "model": "LSTM",
+                        "probability": round(float(p), 4),
+                        "threshold": round(float(l_thresh), 4),
+                        "attack_predicted": bool(a == 1),
+                    }
+                )
+
+            ens_p = 0.5 * probas_by_model["XGBoost"] + 0.5 * lstm_p
+            ens_thresh = custom_threshold if custom_threshold is not None else (thresholds.get("Ensemble (XGB+LSTM)", 0.2019) if use_calibrated_threshold else 0.5)
+            ens_pred = (ens_p >= ens_thresh).astype(int)
+            for i, (p, a) in enumerate(zip(ens_p, ens_pred)):
+                results.append(
+                    {
+                        "row": i,
+                        "model": "Ensemble (XGB+LSTM)",
+                        "probability": round(float(p), 4),
+                        "threshold": round(float(ens_thresh), 4),
+                        "attack_predicted": bool(a == 1),
+                    }
+                )
+        except Exception:
+            pass
+
     return pd.DataFrame(results)
 
 
@@ -199,13 +236,5 @@ if __name__ == "__main__":
     if os.path.exists(DATA_PATH):
         raw = pd.read_csv(DATA_PATH)
         sample = raw[raw["window_start"] >= "2018-03-01"].head(5).reset_index(drop=True)
-        print(f"Running inference sanity check on {len(sample)} test windows:")
-        preds = predict(sample, use_calibrated_threshold=True)
-        for i in range(len(sample)):
-            ts = sample.loc[i, "window_start"]
-            target = int(sample.loc[i, "Future_Attack_Target"])
-            print(f"\n[Window {i}] Time: {ts} | Actual Target: {target}")
-            sub = preds[preds["row"] == i][
-                ["model", "probability", "threshold", "attack_predicted"]
-            ]
-            print(sub.to_string(index=False))
+        preds = predict(sample, use_calibrated_threshold=True, include_lstm=True)
+        print(preds)

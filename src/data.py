@@ -1,19 +1,6 @@
-"""
-data.py — Load, audit, and split the full CIC-IDS2018 dataset.
-
-Attack-family-diverse split: every attack family that appears in Test
-also appears in Train, preventing the zero-overlap FP explosion seen
-with a purely chronological split.
-"""
-
 from typing import List, Tuple
 import pandas as pd
 
-# Attack-family-diverse split (chronological within each partition):
-#   Train : Feb 14 (BruteForce), Feb 16 (DoS Hulk/SlowHTTPTest),
-#           Feb 20 (DDoS LOIC-HTTP), Feb 22 (Web/SQLi/XSS), Feb 28 (Infiltration)
-#   Val   : Feb 15 (DoS GoldenEye/Slowloris), Feb 23 (Web BruteForce/SQLi)
-#   Test  : Feb 21 (DDoS HOIC/LOIC-UDP), Mar 01 (Infiltration), Mar 02 (Botnet)
 TRAIN_DATES = {
     "2018-02-14",
     "2018-02-16",
@@ -29,7 +16,6 @@ TIMESTAMP_COL = "window_start"
 
 
 def load(path: str) -> pd.DataFrame:
-    """Load dataset, parse timestamps, and extract calendar dates."""
     df = pd.read_csv(path)
     df[TIMESTAMP_COL] = pd.to_datetime(df[TIMESTAMP_COL])
     df["date"] = df[TIMESTAMP_COL].dt.date.astype(str)
@@ -37,7 +23,6 @@ def load(path: str) -> pd.DataFrame:
 
 
 def audit(df: pd.DataFrame) -> pd.DataFrame:
-    """Audit per-session window volumes and attack positive rates."""
     summary = (
         df.groupby("date")[TARGET_COL]
         .agg(total="count", positives="sum")
@@ -58,11 +43,6 @@ def audit(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def split(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Partition into Train / Val / Test by attack-family diversity.
-    Each partition is internally chronological; no shuffling across days.
-    Every attack family in Test also appears in Train.
-    """
     train = df[df["date"].isin(TRAIN_DATES)].copy()
     val = df[df["date"].isin(VAL_DATES)].copy()
     test = df[df["date"].isin(TEST_DATES)].copy()
@@ -79,13 +59,11 @@ def split(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 
 def feature_cols(df: pd.DataFrame) -> List[str]:
-    """Return all 75 predictor columns, excluding timestamps and targets."""
     drop = {TIMESTAMP_COL, "date", TARGET_COL}
     return [c for c in df.columns if c not in drop]
 
 
 def xy(split_df: pd.DataFrame, cols: List[str]):
-    """Extract feature matrix X and integer binary target y."""
     X = split_df[cols].values.astype(float)
     y = split_df[TARGET_COL].values.astype(int)
     return X, y

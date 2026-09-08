@@ -1,13 +1,7 @@
-"""
-polars_aggregator.py — Fast, memory-efficient 10-second flow aggregation using Polars.
-Scans raw CIC-IDS2018 day flow CSVs, handles varied schemas, computes 10s windows,
-lag1..3, delta1 features (75 total), and forward 120s attack forecasting targets.
-"""
-
 import glob
 import os
 import sys
-from typing import List, Optional
+from typing import List
 import numpy as np
 import polars as pl
 
@@ -43,10 +37,8 @@ NUMERIC_SUM_COLUMNS: List[str] = [
 
 
 def aggregate_day_file(file_path: str) -> pl.DataFrame:
-    """Read an individual raw day CSV with Polars and aggregate into 10-second windows."""
     print(f"  -> Scanning: {os.path.basename(file_path)}...", end="", flush=True)
 
-    # Read selected columns only to minimize memory consumption
     needed_cols = [
         "Timestamp",
         "Label",
@@ -55,24 +47,20 @@ def aggregate_day_file(file_path: str) -> pl.DataFrame:
         "Flow IAT Mean",
     ] + NUMERIC_SUM_COLUMNS
 
-    # Read CSV lazily
     lf = pl.scan_csv(
         file_path,
         infer_schema_length=10000,
         ignore_errors=True,
     ).select(needed_cols)
 
-    # Drop duplicate headers
     lf = lf.filter(pl.col("Timestamp") != "Timestamp")
 
-    # Parse timestamp format (handles %d/%m/%Y %H:%M:%S and ISO)
     lf = lf.with_columns(
         pl.col("Timestamp")
         .str.to_datetime("%d/%m/%Y %H:%M:%S", strict=False)
         .alias("ts")
     ).filter(pl.col("ts").is_not_null() & (pl.col("ts").dt.year() == 2018))
 
-    # Cast numerics
     cast_exprs = [
         pl.col(c).cast(pl.Float64).fill_null(0.0) for c in NUMERIC_SUM_COLUMNS
     ] + [
@@ -83,12 +71,10 @@ def aggregate_day_file(file_path: str) -> pl.DataFrame:
     ]
     lf = lf.with_columns(cast_exprs)
 
-    # Truncate into 10-second windows
     lf = lf.with_columns(
         pl.col("ts").dt.truncate("10s").alias("window_start")
     )
 
-    # Aggregate base features
     agg_exprs = [
         pl.col("Tot Fwd Pkts").sum().alias("Tot Fwd Pkts_sum"),
         pl.col("Tot Bwd Pkts").sum().alias("Tot Bwd Pkts_sum"),
@@ -116,13 +102,8 @@ def aggregate_day_file(file_path: str) -> pl.DataFrame:
 
 
 def compute_temporal_features(base_df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Generate lag1..3 and delta1 features for all 15 base metrics,
-    and calculate the forward 120s attack target.
-    """
     df = base_df.sort("window_start")
 
-    # Shift lag1..3
     lag_exprs = []
     for f in BASE_FEATURE_NAMES:
         lag_exprs.append(pl.col(f).shift(1).alias(f"{f}_lag1"))
@@ -130,14 +111,12 @@ def compute_temporal_features(base_df: pl.DataFrame) -> pl.DataFrame:
         lag_exprs.append(pl.col(f).shift(3).alias(f"{f}_lag3"))
     df = df.with_columns(lag_exprs)
 
-    # Shift delta1
     delta_exprs = [
         (pl.col(f) - pl.col(f"{f}_lag1")).alias(f"{f}_delta1")
         for f in BASE_FEATURE_NAMES
     ]
     df = df.with_columns(delta_exprs)
 
-    # Fill null std dev with 0.0
     df = df.with_columns(
         [
             pl.col("Flow Duration_std").fill_null(0.0),
@@ -148,7 +127,6 @@ def compute_temporal_features(base_df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-    # Calculate Future_Attack_Target (attack in next 120s / 12 windows)
     has_attack_arr = df["has_attack"].to_numpy()
     n = len(has_attack_arr)
     target_arr = np.zeros(n, dtype=np.float64)
@@ -160,8 +138,6 @@ def compute_temporal_features(base_df: pl.DataFrame) -> pl.DataFrame:
 
     df = df.with_columns(pl.Series("Future_Attack_Target", target_arr))
 
-    # Keep only pre-attack and benign windows (drop windows during ongoing attack)
-    # and drop first 3 rows missing lag3
     filtered_df = df.filter(
         (pl.col("has_attack") == 0) & pl.col("Tot Fwd Pkts_sum_lag3").is_not_null()
     ).drop("has_attack")
@@ -179,7 +155,6 @@ def aggregate_raw_directory(
     input_pattern: str,
     output_path: str,
 ) -> pl.DataFrame:
-    """Aggregate all days and produce final 75-feature training dataset."""
     files = sorted(glob.glob(input_pattern))
     if not files:
         raise FileNotFoundError(f"No files matching pattern: {input_pattern}")
