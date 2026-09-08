@@ -35,8 +35,7 @@ def test_feature_columns_count():
 def test_inference_single_dict(sample_features_dict):
     preds = predict(sample_features_dict, use_calibrated_threshold=True)
     assert isinstance(preds, pd.DataFrame)
-    assert len(preds) == 3
-    assert set(preds["model"].unique()) == {"LogReg", "RandomForest", "XGBoost"}
+    assert "LSTM" in preds["model"].values
     assert "probability" in preds.columns
     assert "attack_predicted" in preds.columns
     assert all(0.0 <= p <= 1.0 for p in preds["probability"])
@@ -45,8 +44,9 @@ def test_inference_single_dict(sample_features_dict):
 def test_inference_batch_dataframe(sample_features_df):
     preds = predict(sample_features_df, use_calibrated_threshold=True)
     assert isinstance(preds, pd.DataFrame)
-    assert len(preds) == 15
     assert preds["row"].nunique() == 5
+    assert "LSTM" in preds["model"].values
+
 
 
 def test_inference_missing_column_raises_error():

@@ -10,7 +10,6 @@ from inference import FEATURE_COLS, get_artifacts, predict
 
 st.set_page_config(
     page_title="VectorFlow | Early Attack Forecaster",
-    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -180,7 +179,7 @@ def render_header():
         """
     <div class="main-header">
         <div class="main-title">
-            <span>🛡️ VECTORFLOW</span>
+            <span>VECTORFLOW</span>
             <span class="badge badge-cyan">AI Pre-Attack Forecaster</span>
             <span class="badge badge-purple">PyTorch LSTM & XGBoost</span>
         </div>
@@ -203,7 +202,7 @@ def render_single_prediction(preds: pd.DataFrame, primary_model: str):
         st.markdown(
             f"""
         <div class="threat-card-danger">
-            <h3 style="margin:0; font-size:20px; font-weight:700;">🚨 CRITICAL: IMMINENT ATTACK FORECASTED (Next 120s)</h3>
+            <h3 style="margin:0; font-size:20px; font-weight:700;">CRITICAL: IMMINENT ATTACK FORECASTED (Next 120s)</h3>
             <p style="margin:8px 0 0 0; font-size:14px;">
                 <b>{primary_model}</b> triggered an operational alarm with probability <b>{prob:.2%}</b> 
                 (threshold: {thresh:.4f}). Immediate traffic shaping or active firewall ACL mitigation recommended.
@@ -216,7 +215,7 @@ def render_single_prediction(preds: pd.DataFrame, primary_model: str):
         st.markdown(
             f"""
         <div class="threat-card-safe">
-            <h3 style="margin:0; font-size:20px; font-weight:700;">✅ NORMAL: NETWORK IN HEALTHY STATE</h3>
+            <h3 style="margin:0; font-size:20px; font-weight:700;">NORMAL: NETWORK IN HEALTHY STATE</h3>
             <p style="margin:8px 0 0 0; font-size:14px;">
                 <b>{primary_model}</b> estimated precursor probability at <b>{prob:.2%}</b> 
                 (below decision threshold of {thresh:.4f}).
@@ -233,7 +232,7 @@ def render_single_prediction(preds: pd.DataFrame, primary_model: str):
         col.metric(
             label=f"{row['model']}",
             value=f"{row['probability']:.1%}",
-            delta=f"{status} (θ={row['threshold']:.2f})",
+            delta=f"{status} (threshold={row['threshold']:.2f})",
             delta_color="inverse" if row["attack_predicted"] else "normal",
         )
 
@@ -284,7 +283,7 @@ def render_batch_predictions(
 
 
 def render_benchmarks():
-    st.markdown("### 📊 Comprehensive Model Benchmarks & Comparison")
+    st.markdown("### Comprehensive Model Benchmarks & Comparison")
     st.write(
         "Evaluated on identical chronological test sequences under distribution shift (Feb 21 DDoS HOIC, Mar 01 Infiltration, Mar 02 Botnet)."
     )
@@ -345,7 +344,7 @@ def render_benchmarks():
     else:
         st.info("Benchmark artifacts not found yet. Click below to execute the benchmark suite.")
 
-    if st.button("🔄 Re-Run Full Benchmark Suite", type="secondary"):
+    if st.button("Re-Run Full Benchmark Suite", type="secondary"):
         with st.spinner("Executing benchmark across all models..."):
             res = subprocess.run([sys.executable, "benchmark.py"], capture_output=True, text=True)
             if res.returncode == 0:
@@ -356,7 +355,7 @@ def render_benchmarks():
 
 
 def render_architecture():
-    st.markdown("### 🔬 System Architecture & Research Design")
+    st.markdown("### System Architecture & Research Design")
     st.markdown(
         """
     **VectorFlow** provides proactive, zero-trust network threat forecasting by treating network traffic as a continuous time series.
@@ -371,7 +370,7 @@ def render_architecture():
        - Class weighting to counteract the 6% positive imbalance.
     3. **Threshold Calibration Strategy**:
        - Standard 0.50 threshold frequently collapses under temporal distribution shift.
-       - Precision-Recall curves on Validation calibrate decision thresholds to guarantee minimum recall constraints (≥50%).
+       - Precision-Recall curves on Validation calibrate decision thresholds to guarantee minimum recall constraints.
     4. **Forecasting Horizon**:
        - Input: 10-second statistical flow windows.
        - Output: Imminent attack presence in the subsequent 120 seconds.
@@ -384,11 +383,12 @@ def main():
 
     render_header()
 
-    available_models = ["XGBoost", "RandomForest", "LogReg"]
+    available_models = []
     if lstm_net is not None:
         available_models.extend(["LSTM", "Ensemble (XGB+LSTM)"])
+    available_models.extend(["XGBoost", "RandomForest", "LogReg"])
 
-    st.sidebar.title("⚙️ VectorFlow Controls")
+    st.sidebar.title("VectorFlow Controls")
     st.sidebar.caption("Defense Configuration Panel")
 
     primary_model = st.sidebar.selectbox(
@@ -415,10 +415,10 @@ def main():
 
     tab1, tab2, tab3, tab4 = st.tabs(
         [
-            "⚙️ Live Threat Simulator",
-            "📂 Batch File Forecasting",
-            "📊 Model Benchmarks",
-            "🔬 Architecture & Research",
+            "Live Threat Simulator",
+            "Batch File Forecasting",
+            "Model Benchmarks",
+            "Architecture & Research",
         ]
     )
 
@@ -474,7 +474,7 @@ def main():
                     f, value=float(inputs[f]), format="%.2f"
                 )
 
-        if st.button("🚀 Forecast Pre-Attack Risk", type="primary", use_container_width=True):
+        if st.button("Forecast Pre-Attack Risk", type="primary", use_container_width=True):
             with st.spinner("Evaluating models..."):
                 preds = predict(
                     inputs,

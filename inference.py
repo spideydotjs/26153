@@ -138,7 +138,7 @@ def predict(
     features: dict[str, float] | pd.DataFrame,
     use_calibrated_threshold: bool = True,
     custom_threshold: float | None = None,
-    include_lstm: bool = False,
+    include_lstm: bool = True,
 ) -> pd.DataFrame:
     scaler, logreg, rf, xgb, thresholds, lstm_net, lstm_scaler, lstm_thresh = get_artifacts()
 
